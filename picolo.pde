@@ -1,4 +1,5 @@
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -35,8 +36,10 @@ PImage[] selectImages() {
     FileNameExtensionFilter filter = new FileNameExtensionFilter("Image Files", "jpg", "png", "bmp", "jpeg");
     chooser.setFileFilter(filter);
     int returnVal = chooser.showOpenDialog(null);
-    if(returnVal == JFileChooser.APPROVE_OPTION) {
-        return (PImage[]) stream(chooser.getSelectedFiles()).map(f -> loadImage(f.getAbsolutePath())).toArray(PImage[]::new);
+    if (returnVal == JFileChooser.APPROVE_OPTION) {
+        return Arrays.stream(chooser.getSelectedFiles())
+                     .map(f -> loadImage(f.getAbsolutePath()))
+                     .toArray(PImage[]::new);
     }
     return null;
 }
@@ -59,9 +62,18 @@ void displayAnalysis() {
     text("Total elements identified: " + totalElements, 10, 30);
 }
 
+class Point {
+    int x, y;
+
+    Point(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
 class ImageProcessor {
     TratarImagens tratarImagens = new TratarImagens();
-    ExecutorService executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors()); // Utiliza todos os processadores disponíveis
+    ExecutorService executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
 
     void processImages(PImage[] imgs) {
         for (PImage img : imgs) {
@@ -78,59 +90,68 @@ class ImageProcessor {
     void processImage(PImage img) {
         if (img != null) {
             img.resize(300, 300);
-            img = tratarImagens.filtroBrilho(img, 150);
-            img = tratarImagens.aplicarFiltroMediana(img);
-            img = tratarImagens.aplicarFiltroSobel(img);
-            img = tratarImagens.aplicarFiltroLaplaciano(img);
-            img = tratarImagens.aplicarFiltroGabor(img, 45);
-            img = tratarImagens.aplicarOperacoesMorfologicas(img, 5);
+            img = tratarImagens.processarFiltros(img); // Centralizado o processamento dos filtros
         }
     }
 
     int countElements(PImage[] imgs) {
         int count = 0;
         for (PImage img : imgs) {
-            // Primeiro, assegurar que a imagem foi processada pelos filtros adequados para simplificar a segmentação
-            img.filter(THRESHOLD); // Aplica um filtro de limiar para converter a imagem em preto e branco
-            
-            // Iniciar a análise de componentes conectados
-            int[][] labels = new int[img.width][img.height]; // Armazena os rótulos para cada componente
-            int label = 1; // Inicia os rótulos de componentes
-    
+            img.filter(THRESHOLD); // Idealmente, ajustar dinamicamente
+            int[][] labels = new int[img.width][img.height];
+            int label = 1;
             for (int y = 0; y < img.height; y++) {
                 for (int x = 0; x < img.width; x++) {
-                    if (img.pixels[y * img.width + x] == color(255) && labels[x][y] == 0) { // Verifica se o pixel é branco e não rotulado
-                        floodFill(img, labels, x, y, label);
-                        label++;
+                    if (img.pixels[y * img.width + x] == color(255) && labels[x][y] == 0) {
+                        floodFill(img, labels, x, y, label++);
                     }
                 }
             }
-            
-            count += label - 1; // Adiciona o número de componentes encontrados nesta imagem ao total
+            count += label - 1;
+            analyzeSegments(img, labels, label - 1);
         }
         return count;
     }
-    
+
     void floodFill(PImage img, int[][] labels, int x, int y, int label) {
-        // Uma implementação simples de flood fill usando uma pilha para evitar estouro de pilha de chamadas recursivas
-        ArrayDeque<Point> stack = new ArrayDeque<>();
-        stack.push(new Point(x, y));
+        ArrayList<Point> stack = new ArrayList<>();
+        stack.add(new Point(x, y));
         while (!stack.isEmpty()) {
-            Point p = stack.pop();
-            if (p.x < 0 || p.y < 0 || p.x >= img.width || p.y >= img.height) continue; // Verifica limites
-            if (labels[p.x][p.y] > 0 || img.pixels[p.y * img.width + p.x] != color(255)) continue; // Verifica se já rotulado ou não é branco
+            Point p = stack.remove(stack.size() - 1); // Remove o último elemento, simulando uma pilha
+            if (p.x < 0 || p.y < 0 || p.x >= img.width || p.y >= img.height) continue;
+            if (labels[p.x][p.y] > 0 || img.pixels[p.y * img.width + p.x] != color(255)) continue;
     
-            labels[p.x][p.y] = label; // Rotula o componente
-    
-            // Empilha todos os vizinhos ortogonais
-            stack.push(new Point(p.x + 1, p.y));
-            stack.push(new Point(p.x - 1, p.y));
-            stack.push(new Point(p.x, p.y + 1));
-            stack.push(new Point(p.x, p.y - 1));
+            labels[p.x][p.y] = label;
+            stack.add(new Point(p.x + 1, p.y));
+            stack.add(new Point(p.x - 1, p.y));
+            stack.add(new Point(p.x, p.y + 1));
+            stack.add(new Point(p.x, p.y - 1));
         }
     }
 
+
+    void analyzeSegments(PImage img, int[][] labels, int numLabels) {
+        int[] area = new int[numLabels + 1];
+        for (int y = 0; y < img.height; y++) {
+            for (int x = 0; x < img.width; x++) {
+                int label = labels[x][y];
+                if (label > 0) {
+                    area[label]++;
+                }
+            }
+        }
+
+        for (int i = 1; i <= numLabels; i++) {
+            if (area[i] > 500) {
+                println("Large object detected with area: " + area[i]);
+            } else {
+                println("Small object detected with area: " + area[i]);
+            }
+        }
+    }
 }
+
+
 
 class TratarImagens {
     PImage processarFiltros(PImage img) {
@@ -190,7 +211,7 @@ class TratarImagens {
             for (int y = -size / 2; y <= size / 2; y++) {
                 x_theta = (float) (x * Math.cos(thetaRad) + y * Math.sin(thetaRad));
                 y_theta = (float) (-x * Math.sin(thetaRad) + y * Math.cos(thetaRad));
-                kernel[x + size / 2][y + size / 2] = (float) Math.exp(-(x_theta * x_theta + y_theta * y_theta) / (2 * sigma * sigma)) * (float) Math.cos(2 * Math.PI x_theta / lambda);
+                kernel[x + size / 2][y + size / 2] = (float) Math.exp(-(x_theta * x_theta + y_theta * y_theta) / (2 * sigma * sigma)) * (float) Math.cos(2 * Math.PI * x_theta / lambda);
             }
         }
 
